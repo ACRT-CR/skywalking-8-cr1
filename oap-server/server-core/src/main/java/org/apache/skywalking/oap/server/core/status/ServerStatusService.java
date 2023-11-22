@@ -20,6 +20,7 @@ package org.apache.skywalking.oap.server.core.status;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Properties;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import org.apache.skywalking.oap.server.core.CoreModuleConfig;
@@ -82,17 +83,32 @@ public class ServerStatusService implements Service {
     }
 
     /**
+     * Mask the configuration value if the key contains any masking keyword.
+     *
+     * @param configKey   the configuration key to check
+     * @param configValue the configuration value to mask
+     * @param keywords    the keywords for masking secrets
+     * @return masked value "******" if key matches any keyword, otherwise return the original value
+     */
+    private String maskConfigValue(String configKey, String configValue, String[] keywords) {
+        String lowerConfigKey = configKey.toLowerCase();
+        for (String keyword : keywords) {
+            if (lowerConfigKey.contains(keyword.toLowerCase())) {
+                return "******";
+            }
+        }
+        return configValue;
+    }
+
+    /**
      * @return a complete list of booting configurations with effected values.
      * @since 9.7.0
      */
-    public String dumpBootingConfigurations() {
+    public String dumpBootingConfigurations(String keywords4MaskingSecretsOfConfig) {
         if (configurations == null || configurations.isEmpty()) {
             return "No available booting configurations.";
         }
-        if (moduleConfig.isDisableConfigDump()) {
-            return "Config dump is disabled.";
-        }
-        final String[] keywords = moduleConfig.getKeywords4MaskingSecretsOfConfig().split(",");
+        final String[] keywords = keywords4MaskingSecretsOfConfig.split(",");
         StringBuilder configList = new StringBuilder();
         for (ApplicationConfiguration.ModuleConfiguration configuration : configurations) {
             final String moduleName = configuration.getModuleName();
@@ -106,20 +122,24 @@ public class ServerStatusService implements Service {
                 (providerName, providerConfiguration) ->
                     providerConfiguration.getProperties().forEach(
                         (key, value) -> {
-                            for (final String keyword : keywords) {
-                                if (key.toString().toLowerCase().contains(keyword.toLowerCase())) {
-                                    value = "******";
-                                }
+                            if (value instanceof Properties) {
+                                Properties properties = (Properties) value;
+                                properties.forEach((k, v) -> {
+                                    String configKey = moduleName + "." + providerName + "." + key + "." + k;
+                                    String configValue = maskConfigValue(k.toString(), v.toString(), keywords);
+                                    configList.append(configKey)
+                                              .append("=")
+                                              .append(configValue)
+                                              .append("\n");
+                                });
+                            } else {
+                                String configKey = moduleName + "." + providerName + "." + key;
+                                String configValue = maskConfigValue(key.toString(), value.toString(), keywords);
+                                configList.append(configKey)
+                                          .append("=")
+                                          .append(configValue)
+                                          .append("\n");
                             }
-
-                            configList.append(moduleName)
-                                      .append(".")
-                                      .append(providerName)
-                                      .append(".")
-                                      .append(key)
-                                      .append("=")
-                                      .append(value)
-                                      .append("\n");
                         }
                     )
             );
